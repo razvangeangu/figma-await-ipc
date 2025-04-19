@@ -1,6 +1,11 @@
+import { CallSignatures } from "./CallSignatures";
 import { DeferredPromise } from "./DeferredPromise";
 
-export type ReceiverFn<R> = (...data: any) => R;
+type AnyIfEmpty<T extends object> = keyof T extends never ? any : T;
+
+export type ReceiverFn<R extends keyof CallSignatures> = (
+	...data: Parameters<CallSignatures[R]>
+) => ReturnType<CallSignatures[R]>;
 
 type MessageBase = {
 	type: "call" | "response" | "error";
@@ -30,7 +35,7 @@ type ConnectMessage = {
 type Message = CallMessage | ResponseMessage | ErrorMessage | ConnectMessage;
 
 const promisesByID: Record<number, DeferredPromise<any>> = {};
-const receiversByName: Record<string, ReceiverFn<unknown>> = {};
+const receiversByName: Record<string, AnyIfEmpty<ReceiverFn<keyof CallSignatures>>> = {};
 const postQueue: Message[] = [];
 const receiveQueue = new Set<CallMessage>;
 let currentID = 0;
@@ -41,19 +46,20 @@ let isConnected = false;
  * Makes a call between the main and UI threads.  It returns a promise that can
  * be awaited until the other side responds.
  *
- * @param {string} name - The name of the receiver in the other thread that is
+ * @param {T} name - The name of the receiver in the other thread that is
  * expected to respond this call.
- * @param {...any} data - Zero or more parameters to send to the receiver.  They
+ * @param {Parameters<CallSignatures[T]>} data - Zero or more parameters to send to the receiver.  They
  * must be of types that can be passed through `postMessage()`.
- * @return Promise<T> - A promise that will be resolved with the receiver's
+ * @return Promise<ReturnType<CallSignatures[T]>> - A promise that will be resolved with the receiver's
  * response when it is sent.
  */
-export function call<T>(
-	name: string,
-	...data: any[])
+export function call<T extends keyof CallSignatures>(
+	name: T,
+	...data: Parameters<CallSignatures[T]>
+): DeferredPromise<ReturnType<CallSignatures[T]>>
 {
 	const id = currentID++;
-	const promise = new DeferredPromise<T>();
+	const promise = new DeferredPromise<ReturnType<CallSignatures[T]>>();
 
 	promisesByID[id] = promise;
 	post({ type: "call", id, name, data });
@@ -72,12 +78,12 @@ export function call<T>(
  * Only a single function can respond to any given name, so subsequent calls to
  * `receive()` will replace the previously registered function.
  *
- * @param {string} name - The name of the receiver.
+ * @param {R} name - The name of the receiver.
  * @param {ReceiverFn} fn - The function that will receive calls to the `name`
  * parameter.
  */
-export function receive<R>(
-	name: string,
+export function receive<R extends keyof CallSignatures>(
+	name: R,
 	fn: ReceiverFn<R>)
 {
 	receiversByName[name] = fn;
